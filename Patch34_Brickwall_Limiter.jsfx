@@ -4,7 +4,7 @@
 //
 // https://github.com/patch-34
 
-desc:Brickwall Limiter
+desc:Patch34 Brickwall Limiter
 
 slider1:0<-24,24,0.1>-Input (dB)
 slider2:-1<-24,0,0.1>-Output Ceiling (dBFS)
