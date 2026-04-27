@@ -1,0 +1,371 @@
+// Patch34 — Impossible Geometry Series: ESCHER
+// Brickwall Limiter
+// Sample-peak brickwall limiter with Input, Output Ceiling, Release controls and a custom Escher-inspired JSFX interface.
+//
+// https://github.com/patch-34
+
+desc:Brickwall Limiter
+
+slider1:0<-24,24,0.1>-Input (dB)
+slider2:-1<-24,0,0.1>-Output Ceiling (dBFS)
+slider3:100<1,500,1>-Release (ms)
+
+options:no_meter
+
+// ── @init: DSP state and palette ──
+@init
+gfx_ext_retina = 1;
+
+// Color palette (значения для gfx_set, диапазон 0..1)
+CR=0.05; CG=0.05; CB=0.06;   // VOID  (near-black)
+LR=0.94; LG=0.91; LB=0.85;   // LINEN (cream)
+OR=0.83; OG=0.63; OB=0.00;   // OCHRE (gold)
+AR=0.53; AG=0.50; AB=0.44;   // ASH   (grey)
+GR=0.27; GG=0.80; GB=0.27;   // GREEN (phosphor)
+ER=0.77; EG=0.20; EB=0.04;   // EMBER (red)
+
+// DSP state
+env=1.0; in_pk=0; out_pk=0; gr=1.0;
+pk_fall=0.9998;
+
+@slider
+inp_lin  = 10^(slider1/20);
+out_lin  = 10^(slider2/20);
+rel_coef = exp(-1/(srate * max(slider3,1) * 0.001));
+
+@sample
+spl0 *= inp_lin; spl1 *= inp_lin;
+in_pk = max(max(abs(spl0),abs(spl1)), in_pk * pk_fall);
+pk = max(abs(spl0),abs(spl1));
+pk > 0 ? target = min(1.0, out_lin/pk) : target = 1.0;
+target < env ? env = target
+             : env = env*rel_coef + target*(1-rel_coef);
+env = min(env, 1.0);
+spl0 *= env; spl1 *= env;
+out_pk = max(max(abs(spl0),abs(spl1)), out_pk * pk_fall);
+gr     = gr * 0.994 + env * 0.006;
+
+// ── @gfx: custom scalable UI ──
+// Стартовый размер gfx-окна.
+// Для минимальных боковых полей держи @gfx близко к BASE_W / BASE_H.
+@gfx 610 370
+
+gfx_ext_retina = max(gfx_ext_retina, 1);
+
+// Базовый canvas для масштабирования UI.
+BASE_W=495; BASE_H=300;
+HOST_W=gfx_w; HOST_H=gfx_h;
+UI_SCALE=min(HOST_W/BASE_W, HOST_H/BASE_H);
+UI_SCALE <= 0 ? UI_SCALE = 1;
+DRAW_W=BASE_W*UI_SCALE;
+DRAW_H=BASE_H*UI_SCALE;
+// OX/OY центрируют UI внутри host gfx-области.
+OX=(HOST_W-DRAW_W)/2;
+OY=(HOST_H-DRAW_H)/2;
+
+font1=max(1,floor(11*UI_SCALE));
+font2=max(1,floor(18*UI_SCALE));
+font3=max(1,floor(13*UI_SCALE));
+font4=max(1,floor(11*UI_SCALE));
+// Шрифты UI: sans для заголовков, mono для значений и meter-текста.
+#FONT_SANS = "Arial";
+#FONT_MONO = "Courier New";
+FONT_BOLD_FLAG = 'b';
+
+gfx_setfont(1, #FONT_MONO, font1, FONT_BOLD_FLAG); // small mono: subtitle, meter labels, footer
+gfx_setfont(2, #FONT_SANS, font2, FONT_BOLD_FLAG); // main title BRICKWALL / LIMITER
+gfx_setfont(3, #FONT_MONO, font3, FONT_BOLD_FLAG); // numeric values
+gfx_setfont(4, #FONT_SANS, font4, FONT_BOLD_FLAG); // slider labels INPUT / OUTPUT / RELEASE
+
+// ── Transform helpers ──
+function SX(x) ( OX + x*UI_SCALE; );
+function SY(y) ( OY + y*UI_SCALE; );
+function SS(v) ( v*UI_SCALE; );
+function TPOS(x y) ( gfx_x=SX(x); gfx_y=SY(y); );
+
+// ── Примитивы ──
+
+// Неформатированный host-fill: только для очистки полной области gfx.
+function F_RAW(x y w h r g b) (
+  gfx_set(r,g,b,1); gfx_rect(x,y,w,h);
+);
+
+// Залитый прямоугольник в координатах базового canvas
+function F(x y w h r g b) local(xx yy ww hh) (
+  xx=SX(x); yy=SY(y); ww=SS(w); hh=SS(h);
+  gfx_set(r,g,b,1); gfx_rect(xx,yy,ww,hh);
+);
+
+// Рамка через 4 полосы (толщина t) в координатах базового canvas
+function B(x y w h t r g b) local(xx yy ww hh tt) (
+  xx=SX(x); yy=SY(y); ww=SS(w); hh=SS(h); tt=SS(t);
+  gfx_set(r,g,b,1);
+  gfx_rect(xx,yy,ww,tt);
+  gfx_rect(xx,yy+hh-tt,ww,tt);
+  gfx_rect(xx,yy,tt,hh);
+  gfx_rect(xx+ww-tt,yy,tt,hh);
+);
+
+// Линия в координатах базового canvas
+function L(x1 y1 x2 y2 aa) (
+  gfx_line(SX(x1),SY(y1),SX(x2),SY(y2),aa);
+);
+
+// Толщина линий логотипа Penrose.
+PENROSE_STROKE_OFFSET = 0.55;
+
+function LLOGO(x1 y1 x2 y2 aa) local(o) (
+  o = PENROSE_STROKE_OFFSET;
+  L(x1,   y1,   x2,   y2,   aa);
+  L(x1+o, y1,   x2+o, y2,   aa);
+  L(x1-o, y1,   x2-o, y2,   aa);
+  L(x1,   y1+o, x2,   y2+o, aa);
+  L(x1,   y1-o, x2,   y2-o, aa);
+);
+
+// Тесселяция (чередующиеся плитки)
+function TESS(x y w h ts) local(tx c) (
+  tx=x; c=0;
+  while(tx < x+w) (
+    c%2==0 ? F(tx,y,ts,h,CR,CG,CB) : F(tx,y,ts,h,LR,LG,LB);
+    tx+=ts; c+=1;
+  );
+);
+
+// Невозможный треугольник Пенроуза (wireframe)
+function PENROSE(cx cy sz) local(ax ay bx by ex ey iax iay ibx iby iex iey) (
+  ax=cx;           ay=cy-sz*0.58;
+  bx=cx+sz*0.50;   by=cy+sz*0.29;
+  ex=cx-sz*0.50;   ey=cy+sz*0.29;
+  iax=cx+(ax-cx)*0.44; iay=cy+(ay-cy)*0.44;
+  ibx=cx+(bx-cx)*0.44; iby=cy+(by-cy)*0.44;
+  iex=cx+(ex-cx)*0.44; iey=cy+(ey-cy)*0.44;
+  // Внешний треугольник — linen
+  gfx_set(LR,LG,LB,1);
+  LLOGO(ax,ay,bx,by,1);
+  LLOGO(bx,by,ex,ey,1);
+  LLOGO(ex,ey,ax,ay,1);
+  // Внутренний треугольник — ash
+  gfx_set(AR,AG,AB,1);
+  LLOGO(iax,iay,ibx,iby,1);
+  LLOGO(ibx,iby,iex,iey,1);
+  LLOGO(iex,iey,iax,iay,1);
+  // Невозможные коннекторы — ochre
+  gfx_set(OR,OG,OB,1);
+  LLOGO(ax,ay,iax,iay,1);
+  LLOGO(bx,by,ibx,iby,1);
+  LLOGO(ex,ey,iex,iey,1);
+);
+
+// Сегментный бар (-60..+6 dB)
+function SEGBAR(val_db x y w h) local(sw sg total filled i) (
+  sw=5; sg=2;
+  total=floor(w/(sw+sg));
+  filled=floor(((val_db+60)/66)*total);
+  filled=max(0,min(total,filled));
+  i=0;
+  while(i<total) (
+    i<filled ? (
+      i>total*0.88 ? gfx_set(ER,EG,EB,1) :
+      i>total*0.72 ? gfx_set(OR,OG,OB,1) :
+                     gfx_set(GR,GG,GB,1);
+    ) : gfx_set(0.12,0.12,0.12,1);
+    gfx_rect(SX(x+i*(sw+sg)),SY(y),SS(sw),SS(h));
+    i+=1;
+  );
+);
+
+// Сегментный бар gain reduction (0..24 dB GR).
+function GRBAR(val_db x y w h) local(sw sg total filled i amt) (
+  sw=5; sg=2;
+  total=floor(w/(sw+sg));
+  amt=max(0,min(24,val_db));
+  filled=floor((amt/24)*total);
+  filled=max(0,min(total,filled));
+  i=0;
+  while(i<total) (
+    i<filled ? (
+      i>total*0.72 ? gfx_set(ER,EG,EB,1) :
+      i>total*0.45 ? gfx_set(OR,OG,OB,1) :
+                     gfx_set(GR,GG,GB,1);
+    ) : gfx_set(0.12,0.12,0.12,1);
+    gfx_rect(SX(x+i*(sw+sg)),SY(y),SS(sw),SS(h));
+    i+=1;
+  );
+);
+
+// Строка слайдера.
+function SLIDER(sl x y w h is_dark) local(bgr bgg bgb fgr fgg fgb lw tx tw ty th vx t vl vsw vsh thx thy thw thh) (
+
+  is_dark ? (bgr=CR;bgg=CG;bgb=CB;fgr=LR;fgg=LG;fgb=LB;)
+          : (bgr=LR;bgg=LG;bgb=LB;fgr=CR;fgg=CG;fgb=CB;);
+
+  F(x,y,w,h,bgr,bgg,bgb);
+
+  // Лейбл (выравнивание по правому краю в 100px)
+  lw=100;
+  gfx_setfont(4); gfx_set(AR,AG,AB,1);
+  sl==0 ? ( gfx_measurestr("INPUT",vsw,vsh);
+            TPOS(x+lw-(vsw/UI_SCALE)-8, y+(h-(vsh/UI_SCALE))/2);
+            gfx_drawstr("INPUT"); );
+  sl==1 ? ( gfx_measurestr("OUTPUT",vsw,vsh);
+            TPOS(x+lw-(vsw/UI_SCALE)-8, y+(h-(vsh/UI_SCALE))/2);
+            gfx_drawstr("OUTPUT"); );
+  sl==2 ? ( gfx_measurestr("RELEASE",vsw,vsh);
+            TPOS(x+lw-(vsw/UI_SCALE)-8, y+(h-(vsh/UI_SCALE))/2);
+            gfx_drawstr("RELEASE"); );
+
+  // Трек (только рамка)
+  tx=x+lw+6; tw=w-lw-88; ty=y+h/2-5; th=10;
+  B(tx,ty,tw,th,2,fgr,fgg,fgb);
+
+  // Ползунок
+  sl==0 ? vl=slider1;
+  sl==1 ? vl=slider2;
+  sl==2 ? vl=slider3;
+  sl==0 ? t=(vl+24)/48;
+  sl==1 ? t=(vl+24)/24;
+  sl==2 ? t=(vl-1)/499;
+  t=max(0,min(1,t));
+
+  thw=16; thh=20;
+  thx=tx+t*(tw-thw); thy=ty+th/2-thh/2;
+  F(thx,thy,thw,thh,fgr,fgg,fgb);
+  // Центральная риска на ползунке
+  gfx_set(bgr,bgg,bgb,1);
+  gfx_line(SX(thx+thw/2),SY(thy+3),SX(thx+thw/2),SY(thy+thh-3));
+  // Охровая рамка ползунка
+  B(thx,thy,thw,thh,1,OR,OG,OB);
+
+  // Бокс значения
+  vx=tx+tw+10;
+  F(vx,y+4,66,h-8, is_dark?0.10:0.86, is_dark?0.10:0.84, is_dark?0.10:0.78);
+  B(vx,y+4,66,h-8,2,fgr,fgg,fgb);
+  gfx_setfont(3); gfx_set(OR,OG,OB,1);
+  sprintf(#vbuf,"%.1f",vl);
+  gfx_measurestr(#vbuf,vsw,vsh);
+  TPOS(vx+(66-(vsw/UI_SCALE))/2, y+(h-(vsh/UI_SCALE))/2);
+  gfx_drawstr(#vbuf);
+);
+
+// Строка метра
+function MROW(label val_db x y w h alt) local(vsw vsh) (
+  alt ? F(x,y,w,h-1,0.08,0.08,0.09);
+  gfx_setfont(1); gfx_set(AR,AG,AB,1);
+  gfx_measurestr(label,vsw,vsh);
+  TPOS(x+(METER_LABEL_W-(vsw/UI_SCALE))/2, y+(h-(vsh/UI_SCALE))/2);
+  gfx_drawstr(label);
+  SEGBAR(val_db, x+126, y+h/2-5, w-210, 10);
+  gfx_setfont(3); gfx_set(OR,OG,OB,1);
+  sprintf(#mbuf,"%.1f dB",val_db);
+  gfx_measurestr(#mbuf,vsw,vsh);
+  TPOS(x+w-(vsw/UI_SCALE)-10, y+(h-(vsh/UI_SCALE))/2);
+  gfx_drawstr(#mbuf);
+  F(x,y+h-1,w,1,0.15,0.15,0.14);
+);
+
+// Строка gain reduction.
+function MROW_GR(label val_db x y w h alt) local(vsw vsh) (
+  alt ? F(x,y,w,h-1,0.08,0.08,0.09);
+  gfx_setfont(1); gfx_set(AR,AG,AB,1);
+  gfx_measurestr(label,vsw,vsh);
+  TPOS(x+(METER_LABEL_W-(vsw/UI_SCALE))/2, y+(h-(vsh/UI_SCALE))/2);
+  gfx_drawstr(label);
+  GRBAR(val_db, x+126, y+h/2-5, w-210, 10);
+  gfx_setfont(3); gfx_set(OR,OG,OB,1);
+  sprintf(#mbuf,"%.1f dB",val_db);
+  gfx_measurestr(#mbuf,vsw,vsh);
+  TPOS(x+w-(vsw/UI_SCALE)-10, y+(h-(vsh/UI_SCALE))/2);
+  gfx_drawstr(#mbuf);
+  F(x,y+h-1,w,1,0.15,0.15,0.14);
+);
+
+// ── Layout constants in base design coordinates ──
+W=BASE_W; H=BASE_H;
+TB=44; CTRL=132; SIDE=8;
+// Ширина левого блока подписей meter-строк.
+METER_LABEL_W=126;
+METER_Y=TB+CTRL; METER_H=H-METER_Y;
+MRH=floor((METER_H-26)/3);
+
+// ── Meter values ──
+in_db     = 20*log10(max(in_pk, 0.00001));
+out_db    = 20*log10(max(out_pk,0.00001));
+gr_db     = 20*log10(max(gr,    0.00001));
+gr_amt_db = max(0, -gr_db);
+
+// ── Фон ──
+F_RAW(0,0,HOST_W,HOST_H,CR,CG,CB);
+
+// ── Title bar ──
+// Размер и позиция логотипа Penrose.
+PENROSE_SIZE=42;
+PENROSE_Y=TB/1.55;
+PENROSE_X=29;
+PENROSE(PENROSE_X,PENROSE_Y,PENROSE_SIZE);
+gfx_setfont(2); gfx_set(LR,LG,LB,1);
+TPOS(52,7); gfx_drawstr("BRICKWALL");
+gfx_set(OR,OG,OB,1);
+gfx_measurestr("BRICKWALL",_tw,_th);
+TPOS(52+(_tw/UI_SCALE)+5,7); gfx_drawstr("LIMITER");
+gfx_setfont(1); gfx_set(0.28,0.26,0.24,1);
+TPOS(52,26); gfx_drawstr("PATCH34  ESCHER EDITION");
+TESS(W-56,0,56,TB,14);
+F(0,TB-3,W,3,OR,OG,OB);
+
+// ── Controls ──
+F(0,TB,SIDE,CTRL,CR,CG,CB);
+SLIDER(0, SIDE, TB,     W-SIDE, 44, 0);
+SLIDER(1, SIDE, TB+44,  W-SIDE, 44, 1);
+SLIDER(2, SIDE, TB+88,  W-SIDE, 44, 0);
+F(SIDE,TB+43,  W-SIDE,2, 0.80,0.77,0.72);
+F(SIDE,TB+87,  W-SIDE,2, 0.80,0.77,0.72);
+F(0,TB+CTRL-3,W,3,OR,OG,OB);
+
+// ── Meters ──
+F(0,METER_Y,W,METER_H,CR,CG,CB);
+F(0,METER_Y,SIDE,METER_H,LR,LG,LB);
+gfx_setfont(1); gfx_set(0.30,0.28,0.26,1);
+TPOS(SIDE+8,METER_Y+7);
+gfx_drawstr("ALL BRICKS ARE WALLS");
+F(SIDE,METER_Y+21,W-SIDE,1, 0.18,0.18,0.16);
+MROW("INPUT PEAK",  in_db,  SIDE, METER_Y+24,         W-SIDE, MRH, 0);
+MROW("OUTPUT PEAK", out_db, SIDE, METER_Y+24+MRH,     W-SIDE, MRH, 1);
+MROW_GR("GAIN RED.", gr_amt_db, SIDE, METER_Y+24+MRH*2, W-SIDE, MRH, 0);
+gfx_setfont(1); gfx_set(0.16,0.15,0.14,1);
+gfx_measurestr("ALL BRICKS ARE WALLS",_tw,_th);
+TPOS(W-(_tw/UI_SCALE)-8, H-(_th/UI_SCALE)-5);
+
+// ── Mouse: перетаскивание слайдеров ──
+_ml=mouse_cap&1;
+_inside = mouse_x >= OX && mouse_x <= OX+DRAW_W && mouse_y >= OY && mouse_y <= OY+DRAW_H;
+_mx=(mouse_x-OX)/UI_SCALE;
+_my=(mouse_y-OY)/UI_SCALE;
+_lw=100; _tx=SIDE+_lw+6; _tw=W-SIDE-_lw-88;
+
+_ml>0 && _inside && _my>=TB && _my<TB+CTRL ? (
+  _sl=floor((_my-TB)/44);
+  _t=max(0,min(1,(_mx-_tx)/(_tw-16)));
+  _sl==0 ? (
+    slider1=-24+_t*48;
+    inp_lin  = 10^(slider1/20);
+    out_lin  = 10^(slider2/20);
+    rel_coef = exp(-1/(srate * max(slider3,1) * 0.001));
+        sliderchange(1);
+  );
+  _sl==1 ? (
+    slider2=-24+_t*24;
+    inp_lin  = 10^(slider1/20);
+    out_lin  = 10^(slider2/20);
+    rel_coef = exp(-1/(srate * max(slider3,1) * 0.001));
+        sliderchange(2);
+  );
+  _sl==2 ? (
+    slider3=1  +_t*499;
+    inp_lin  = 10^(slider1/20);
+    out_lin  = 10^(slider2/20);
+    rel_coef = exp(-1/(srate * max(slider3,1) * 0.001));
+        sliderchange(4);
+  );
+);
+
