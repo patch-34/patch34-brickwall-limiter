@@ -1,16 +1,16 @@
+desc:Patch34 Brickwall Limiter
 // Patch34 — Impossible Geometry Series: ESCHER
 // Brickwall Limiter
 // Sample-peak brickwall limiter with Input, Output Ceiling, Release controls and a custom Escher-inspired JSFX interface.
 //
 // https://github.com/patch-34
 
-desc:Patch34 Brickwall Limiter
-
 slider1:0<-24,24,0.1>-Input (dB)
 slider2:-1<-24,0,0.1>-Output Ceiling (dBFS)
 slider3:100<1,500,1>-Release (ms)
 
 options:no_meter
+options:want_all_kb
 
 // ── @init: DSP state and palette ──
 @init
@@ -27,6 +27,24 @@ ER=0.77; EG=0.20; EB=0.04;   // EMBER (red)
 // DSP state
 env=1.0; in_pk=0; out_pk=0; gr=1.0;
 pk_fall=0.9998;
+
+// Minimal value-box edit selection state.
+edit_active=0;
+edit_sl=-1;
+edit_dirty=0;
+edit_select_all=0;
+edit_cursor_pos=0;
+caret_blink_t=0;
+edit_drag_block=0;
+prev_ml=0;
+last_slider_click_t=-1000;
+last_slider_click_sl=-1;
+last_value_click_t=-1000;
+last_value_click_sl=-1;
+DBL_CLICK_TIME=0.35;
+CARET_BLINK_HALF_SEC=0.5;
+// Небольшой запас по высоте каретки вокруг текста.
+CARET_H_PAD=1;
 
 @slider
 inp_lin  = 10^(slider1/20);
@@ -195,7 +213,7 @@ function GRBAR(val_db x y w h) local(sw sg total filled i amt) (
 );
 
 // Строка слайдера.
-function SLIDER(sl x y w h is_dark) local(bgr bgg bgb fgr fgg fgb lw tx tw ty th vx t vl vsw vsh thx thy thw thh) (
+function SLIDER(sl x y w h is_dark) local(bgr bgg bgb fgr fgg fgb lw tx tw ty th vx t vl vsw vsh thx thy thw thh text_x text_y caret_x sel_w sel_h prefix_w prefix_h blink_phase caret_visible) (
 
   is_dark ? (bgr=CR;bgg=CG;bgb=CB;fgr=LR;fgg=LG;fgb=LB;)
           : (bgr=LR;bgg=LG;bgb=LB;fgr=CR;fgg=CG;fgb=CB;);
@@ -241,11 +259,44 @@ function SLIDER(sl x y w h is_dark) local(bgr bgg bgb fgr fgg fgb lw tx tw ty th
   vx=tx+tw+10;
   F(vx,y+4,66,h-8, is_dark?0.10:0.86, is_dark?0.10:0.84, is_dark?0.10:0.78);
   B(vx,y+4,66,h-8,2,fgr,fgg,fgb);
+  edit_active && edit_sl==sl ? (
+    F(vx,y+4,66,h-8,OR,OG,OB);
+    B(vx,y+4,66,h-8,2,CR,CG,CB);
+    B(vx+3,y+7,60,h-14,1,LR,LG,LB);
+  );
   gfx_setfont(3); gfx_set(OR,OG,OB,1);
-  sprintf(#vbuf,"%.1f",vl);
-  gfx_measurestr(#vbuf,vsw,vsh);
-  TPOS(vx+(66-(vsw/UI_SCALE))/2, y+(h-(vsh/UI_SCALE))/2);
-  gfx_drawstr(#vbuf);
+  edit_active && edit_sl==sl ? (
+    gfx_measurestr(#edit_buf,vsw,vsh);
+    text_x=vx+(66-(vsw/UI_SCALE))/2;
+    text_y=y+(h-(vsh/UI_SCALE))/2;
+    edit_select_all ? (
+      sel_w=max(4,vsw/UI_SCALE)+4;
+      sel_h=(vsh/UI_SCALE)+4;
+      F(text_x-2,text_y-2,sel_w,sel_h,CR,CG,CB);
+      gfx_set(LR,LG,LB,1);
+    ) : (
+      gfx_set(CR,CG,CB,1);
+    );
+    TPOS(text_x, text_y);
+    gfx_drawstr(#edit_buf);
+    !edit_select_all ? (
+      edit_cursor_pos <= 0 ? (
+        prefix_w=0;
+      ) : (
+        strcpy_substr(#edit_prefix,#edit_buf,0,edit_cursor_pos);
+        gfx_measurestr(#edit_prefix,prefix_w,prefix_h);
+      );
+      caret_x=text_x+(prefix_w/UI_SCALE);
+      blink_phase=floor((time_precise()-caret_blink_t)/CARET_BLINK_HALF_SEC);
+      caret_visible=blink_phase%2 == 0;
+      caret_visible ? gfx_line(SX(caret_x),SY(text_y-CARET_H_PAD),SX(caret_x),SY(text_y+(vsh/UI_SCALE)+CARET_H_PAD),1);
+    );
+  ) : (
+    sprintf(#vbuf,"%.1f",vl);
+    gfx_measurestr(#vbuf,vsw,vsh);
+    TPOS(vx+(66-(vsw/UI_SCALE))/2, y+(h-(vsh/UI_SCALE))/2);
+    gfx_drawstr(#vbuf);
+  );
 );
 
 // Строка метра
@@ -309,7 +360,7 @@ gfx_set(OR,OG,OB,1);
 gfx_measurestr("BRICKWALL",_tw,_th);
 TPOS(52+(_tw/UI_SCALE)+5,7); gfx_drawstr("LIMITER");
 gfx_setfont(1); gfx_set(0.28,0.26,0.24,1);
-TPOS(52,26); gfx_drawstr("PATCH34  ESCHER EDITION");
+TPOS(52,26); gfx_drawstr("PATCH34  BRICKWALL LIMITER  v1.0.21");
 TESS(W-56,0,56,TB,14);
 F(0,TB-3,W,3,OR,OG,OB);
 
@@ -336,14 +387,295 @@ gfx_setfont(1); gfx_set(0.16,0.15,0.14,1);
 gfx_measurestr("ALL BRICKS ARE WALLS",_tw,_th);
 TPOS(W-(_tw/UI_SCALE)-8, H-(_th/UI_SCALE)-5);
 
-// ── Mouse: перетаскивание слайдеров ──
+// ── Mouse: value-box selection scaffold and slider dragging ──
 _ml=mouse_cap&1;
+_click=_ml>0 && prev_ml==0;
 _inside = mouse_x >= OX && mouse_x <= OX+DRAW_W && mouse_y >= OY && mouse_y <= OY+DRAW_H;
 _mx=(mouse_x-OX)/UI_SCALE;
 _my=(mouse_y-OY)/UI_SCALE;
 _lw=100; _tx=SIDE+_lw+6; _tw=W-SIDE-_lw-88;
+_vb_x1=_tx+_tw+10; _vb_x2=_vb_x1+66;
+_dbl_reset_block=0;
 
-_ml>0 && _inside && _my>=TB && _my<TB+CTRL ? (
+_click && _inside ? (
+  _my>=TB && _my<TB+CTRL ? (
+    _sl=floor((_my-TB)/44);
+    _vb_y1=TB+_sl*44+4;
+    _vb_y2=_vb_y1+44-8;
+    _mx>=_vb_x1 && _mx<=_vb_x2 && _my>=_vb_y1 && _my<=_vb_y2 ? (
+      _now=time_precise();
+      edit_active && edit_sl==_sl ? (
+        last_value_click_sl==_sl && _now-last_value_click_t <= DBL_CLICK_TIME ? (
+          edit_select_all=1;
+          edit_cursor_pos=strlen(#edit_buf);
+          caret_blink_t=_now;
+        ) : (
+          gfx_setfont(3);
+          gfx_measurestr(#edit_buf,_edit_w,_edit_h);
+          _text_x=_vb_x1+(66-(_edit_w/UI_SCALE))/2;
+          _best_pos=0;
+          _best_dist=abs(_mx-_text_x);
+          _i=1;
+          loop(strlen(#edit_buf),
+            strcpy_substr(#edit_prefix,#edit_buf,0,_i);
+            gfx_measurestr(#edit_prefix,_prefix_w,_prefix_h);
+            _cand_x=_text_x+(_prefix_w/UI_SCALE);
+            _dist=abs(_mx-_cand_x);
+            _dist < _best_dist ? (
+              _best_dist=_dist;
+              _best_pos=_i;
+            );
+            _i+=1;
+          );
+          edit_cursor_pos=_best_pos;
+          edit_select_all=0;
+          caret_blink_t=_now;
+        );
+      ) : (
+        edit_active=1;
+        edit_sl=_sl;
+        _sl==0 ? sprintf(#edit_buf,"%.1f",slider1);
+        _sl==1 ? sprintf(#edit_buf,"%.1f",slider2);
+        _sl==2 ? sprintf(#edit_buf,"%.1f",slider3);
+        edit_dirty=0;
+        edit_select_all=1;
+        edit_cursor_pos=strlen(#edit_buf);
+        caret_blink_t=_now;
+      );
+      edit_drag_block=1;
+      last_slider_click_t=-1000;
+      last_slider_click_sl=-1;
+      last_value_click_t=_now;
+      last_value_click_sl=_sl;
+    ) : (
+      edit_active=0;
+      edit_sl=-1;
+      edit_dirty=0;
+      edit_select_all=0;
+      edit_cursor_pos=0;
+      last_value_click_t=-1000;
+      last_value_click_sl=-1;
+      _mx>=_tx && _mx<=_tx+_tw ? (
+        _now=time_precise();
+        last_slider_click_sl==_sl && _now-last_slider_click_t <= DBL_CLICK_TIME ? (
+          _sl==0 ? (
+            slider1=0;
+            inp_lin  = 10^(slider1/20);
+            out_lin  = 10^(slider2/20);
+            rel_coef = exp(-1/(srate * max(slider3,1) * 0.001));
+            sliderchange(1);
+          );
+          _sl==1 ? (
+            slider2=-1;
+            inp_lin  = 10^(slider1/20);
+            out_lin  = 10^(slider2/20);
+            rel_coef = exp(-1/(srate * max(slider3,1) * 0.001));
+            sliderchange(2);
+          );
+          _sl==2 ? (
+            slider3=100;
+            inp_lin  = 10^(slider1/20);
+            out_lin  = 10^(slider2/20);
+            rel_coef = exp(-1/(srate * max(slider3,1) * 0.001));
+            sliderchange(4);
+          );
+          last_slider_click_t=-1000;
+          last_slider_click_sl=-1;
+          edit_drag_block=1;
+          _dbl_reset_block=1;
+        ) : (
+          last_slider_click_t=_now;
+          last_slider_click_sl=_sl;
+        );
+      ) : (
+        last_slider_click_t=-1000;
+        last_slider_click_sl=-1;
+      );
+    );
+  ) : (
+    edit_active=0;
+    edit_sl=-1;
+    edit_dirty=0;
+    edit_select_all=0;
+    edit_cursor_pos=0;
+    last_slider_click_t=-1000;
+    last_slider_click_sl=-1;
+    last_value_click_t=-1000;
+    last_value_click_sl=-1;
+  );
+);
+
+edit_active ? (
+  _key = gfx_getchar();
+  _key == 27 ? (
+    edit_active = 0;
+    edit_sl = -1;
+    edit_dirty = 0;
+    edit_select_all = 0;
+    edit_cursor_pos = 0;
+  ) : (
+    _key == 1 ? (
+      edit_select_all = 1;
+      edit_cursor_pos = strlen(#edit_buf);
+      caret_blink_t = time_precise();
+    ) : (
+    _key == 'left' ? (
+      edit_select_all ? (
+        edit_select_all = 0;
+        edit_cursor_pos = 0;
+      ) : (
+        edit_cursor_pos = max(0,edit_cursor_pos-1);
+      );
+      caret_blink_t = time_precise();
+    ) : (
+    _key == 'rght' ? (
+      edit_select_all ? (
+        edit_select_all = 0;
+        edit_cursor_pos = strlen(#edit_buf);
+      ) : (
+        edit_cursor_pos = min(strlen(#edit_buf),edit_cursor_pos+1);
+      );
+      caret_blink_t = time_precise();
+    ) : (
+    _key == 'up' ? (
+      edit_select_all = 0;
+      edit_cursor_pos = 0;
+      caret_blink_t = time_precise();
+    ) : (
+    _key == 'down' ? (
+      edit_select_all = 0;
+      edit_cursor_pos = strlen(#edit_buf);
+      caret_blink_t = time_precise();
+    ) : (
+    (_key == 13 || _key == 10) ? (
+      _len = strlen(#edit_buf);
+      _parse_ok = _len > 0;
+      _len == 1 && str_getchar(#edit_buf,0) == 45 ? _parse_ok = 0;
+      _len == 1 && str_getchar(#edit_buf,0) == 46 ? _parse_ok = 0;
+      _len == 2 && str_getchar(#edit_buf,0) == 45 && str_getchar(#edit_buf,1) == 46 ? _parse_ok = 0;
+
+      _parse_ok ? _parse_ok = match("%f",#edit_buf,_edit_val);
+
+      _parse_ok ? (
+        edit_sl == 0 ? (
+          slider1=max(-24,min(24,_edit_val));
+          inp_lin  = 10^(slider1/20);
+          out_lin  = 10^(slider2/20);
+          rel_coef = exp(-1/(srate * max(slider3,1) * 0.001));
+          sliderchange(1);
+        );
+        edit_sl == 1 ? (
+          slider2=max(-24,min(0,_edit_val));
+          inp_lin  = 10^(slider1/20);
+          out_lin  = 10^(slider2/20);
+          rel_coef = exp(-1/(srate * max(slider3,1) * 0.001));
+          sliderchange(2);
+        );
+        edit_sl == 2 ? (
+          slider3=max(1,min(500,_edit_val));
+          inp_lin  = 10^(slider1/20);
+          out_lin  = 10^(slider2/20);
+          rel_coef = exp(-1/(srate * max(slider3,1) * 0.001));
+          sliderchange(4);
+        );
+      );
+
+      edit_active = 0;
+      edit_sl = -1;
+      edit_dirty = 0;
+      edit_select_all = 0;
+      edit_cursor_pos = 0;
+    ) : (
+      (_key == 8 || _key == 127) ? (
+        edit_select_all ? (
+          strcpy(#edit_buf,"");
+          edit_select_all = 0;
+          edit_cursor_pos = 0;
+          edit_dirty = 1;
+          caret_blink_t = time_precise();
+        ) : (
+          _len = strlen(#edit_buf);
+          _key == 8 ? (
+            edit_cursor_pos > 0 ? (
+              strcpy_substr(#edit_left,#edit_buf,0,edit_cursor_pos-1);
+              strcpy_substr(#edit_right,#edit_buf,edit_cursor_pos);
+              strcpy(#edit_buf,#edit_left);
+              strcat(#edit_buf,#edit_right);
+              edit_cursor_pos -= 1;
+              edit_dirty = 1;
+              caret_blink_t = time_precise();
+            );
+          ) : (
+            edit_cursor_pos < _len ? (
+              strcpy_substr(#edit_left,#edit_buf,0,edit_cursor_pos);
+              strcpy_substr(#edit_right,#edit_buf,edit_cursor_pos+1);
+              strcpy(#edit_buf,#edit_left);
+              strcat(#edit_buf,#edit_right);
+              edit_dirty = 1;
+              caret_blink_t = time_precise();
+            );
+          );
+        );
+      );
+
+      _valid_key = 0;
+      _key >= 48 && _key <= 57 ? _valid_key = 1;
+
+      _key == 46 ? (
+        edit_select_all ? (
+          _valid_key = 1;
+        ) : (
+          _has_dot = 0;
+          _i = 0;
+          loop(strlen(#edit_buf),
+            str_getchar(#edit_buf,_i) == 46 ? _has_dot = 1;
+            _i += 1;
+          );
+          _has_dot == 0 ? _valid_key = 1;
+        );
+      );
+
+      _key == 45 && (edit_sl == 0 || edit_sl == 1) && (edit_select_all || strlen(#edit_buf) == 0 || (edit_cursor_pos == 0 && str_getchar(#edit_buf,0) != 45)) ? _valid_key = 1;
+
+      _valid_key ? (
+        edit_select_all ? (
+          strcpy(#edit_buf,"");
+          edit_select_all = 0;
+          edit_cursor_pos = 0;
+        );
+        strcpy_substr(#edit_left,#edit_buf,0,edit_cursor_pos);
+        strcpy_substr(#edit_right,#edit_buf,edit_cursor_pos);
+        _key == 45 ? strcpy(#edit_char,"-");
+        _key == 46 ? strcpy(#edit_char,".");
+        _key == 48 ? strcpy(#edit_char,"0");
+        _key == 49 ? strcpy(#edit_char,"1");
+        _key == 50 ? strcpy(#edit_char,"2");
+        _key == 51 ? strcpy(#edit_char,"3");
+        _key == 52 ? strcpy(#edit_char,"4");
+        _key == 53 ? strcpy(#edit_char,"5");
+        _key == 54 ? strcpy(#edit_char,"6");
+        _key == 55 ? strcpy(#edit_char,"7");
+        _key == 56 ? strcpy(#edit_char,"8");
+        _key == 57 ? strcpy(#edit_char,"9");
+        strcpy(#edit_buf,#edit_left);
+        strcat(#edit_buf,#edit_char);
+        strcat(#edit_buf,#edit_right);
+        edit_cursor_pos += 1;
+        edit_dirty = 1;
+        caret_blink_t = time_precise();
+      );
+    );
+    );
+    );
+    );
+    );
+    );
+  );
+);
+
+_ml==0 ? edit_drag_block=0;
+
+_ml>0 && !edit_drag_block && !_dbl_reset_block && _inside && _my>=TB && _my<TB+CTRL ? (
   _sl=floor((_my-TB)/44);
   _t=max(0,min(1,(_mx-_tx)/(_tw-16)));
   _sl==0 ? (
@@ -369,3 +701,57 @@ _ml>0 && _inside && _my>=TB && _my<TB+CTRL ? (
   );
 );
 
+// ── Mouse wheel: управление слайдерами при наведении на активную область ──
+_wheel = mouse_wheel;
+_wheel != 0 && _inside ? (
+  _ctrl_x1 = _tx;
+  _ctrl_x2 = _tx + _tw + 10 + 66;
+  _my>=TB && _my<TB+CTRL && _mx>=_ctrl_x1 && _mx<=_ctrl_x2 ? (
+    _sl=floor((_my-TB)/44);
+    _notch=_wheel/120;
+    _sl==0 ? (
+      slider1=max(-24,min(24,slider1 + _notch*0.2));
+      inp_lin  = 10^(slider1/20);
+      out_lin  = 10^(slider2/20);
+      rel_coef = exp(-1/(srate * max(slider3,1) * 0.001));
+      sliderchange(1);
+      edit_active && edit_sl == 0 ? (
+        sprintf(#edit_buf,"%.1f",slider1);
+        edit_cursor_pos=strlen(#edit_buf);
+        edit_dirty=0;
+        caret_blink_t=time_precise();
+      );
+      mouse_wheel=0;
+    );
+    _sl==1 ? (
+      slider2=max(-24,min(0,slider2 + _notch*0.2));
+      inp_lin  = 10^(slider1/20);
+      out_lin  = 10^(slider2/20);
+      rel_coef = exp(-1/(srate * max(slider3,1) * 0.001));
+      sliderchange(2);
+      edit_active && edit_sl == 1 ? (
+        sprintf(#edit_buf,"%.1f",slider2);
+        edit_cursor_pos=strlen(#edit_buf);
+        edit_dirty=0;
+        caret_blink_t=time_precise();
+      );
+      mouse_wheel=0;
+    );
+    _sl==2 ? (
+      slider3=max(1,min(500,slider3 + _notch*2));
+      inp_lin  = 10^(slider1/20);
+      out_lin  = 10^(slider2/20);
+      rel_coef = exp(-1/(srate * max(slider3,1) * 0.001));
+      sliderchange(4);
+      edit_active && edit_sl == 2 ? (
+        sprintf(#edit_buf,"%.1f",slider3);
+        edit_cursor_pos=strlen(#edit_buf);
+        edit_dirty=0;
+        caret_blink_t=time_precise();
+      );
+      mouse_wheel=0;
+    );
+  );
+);
+
+prev_ml=_ml;
